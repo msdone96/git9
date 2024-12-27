@@ -1,0 +1,164 @@
+name: Test Workflow
+
+on:
+  push:
+    branches: [ main ]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.github/workflows/scraper.yml'
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:  # Allow manual triggering
+
+env:
+  GO_VERSION: '1.21'
+
+jobs:
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        go-version: ['1.20', '1.21']
+        
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ matrix.go-version }}
+          cache: true
+
+      - name: Install dependencies
+        run: |
+          go mod download
+          go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+
+      - name: Verify dependencies
+        run: go mod verify
+
+      - name: Run unit tests with race detection
+        run: go test -v -race -coverprofile=coverage.txt -covermode=atomic ./...
+
+      - name: Run integration tests
+        run: go test -v -tags=integration ./...
+
+      - name: Run linter
+        uses: golangci/golangci-lint-action@v3
+        with:
+          version: latest
+          args: --timeout=5m
+          
+      - name: Check for common mistakes
+        run: |
+          go vet ./...
+          golangci-lint run --enable-all --disable=lll,gomnd,gochecknoglobals
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage.txt
+          flags: unittests
+          fail_ci_if_error: true
+
+      - name: Test binary builds
+        run: |
+          GOOS=linux GOARCH=amd64 go build -o scraper-linux-amd64 .
+          GOOS=windows GOARCH=amd64 go build -o scraper-windows-amd64.exe .
+          GOOS=darwin GOARCH=amd64 go build -o scraper-darwin-amd64 .
+
+      - name: Upload test binaries
+        uses: actions/upload-artifact@v3
+        with:
+          name: test-binaries
+          path: |
+            scraper-linux-amd64
+            scraper-windows-amd64.exe
+            scraper-darwin-amd64
+          retention-days: 7
+
+  test-inputs:
+    name: Test Input Validation
+    runs-on: ubuntu-latest
+    needs: test
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Test with sample inputs
+        run: |
+          # Create test input file
+          echo "URL,Notes" > test_input.csv
+          echo "https://example.com,Test site" >> test_input.csv
+          echo "https://invalid-url,Bad URL" >> test_input.csv
+          
+          # Build and run with test input
+          go build -o scraper .
+          ./scraper -input=test_input.csv -timeout=5 -workers=2
+
+      - name: Test error handling
+        run: |
+          # Test with missing input file
+          if ./scraper -input=nonexistent.csv 2>&1 | grep -q "Failed to read URLs"; then
+            echo "Error handling for missing file works correctly"
+          else
+            echo "Error handling test failed"
+            exit 1
+          fi
+
+  benchmark:
+    name: Run Benchmarks
+    runs-on: ubuntu-latest
+    needs: test
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Run benchmarks
+        run: go test -bench=. -benchmem ./...
+
+      - name: Store benchmark result
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          name: Go Benchmark
+          tool: 'go'
+          output-file-path: benchmark.txt
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          auto-push: true
+          alert-threshold: '150%'
+          comment-on-alert: true
+          fail-on-alert: true
+
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    needs: test
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Gosec Security Scanner
+        uses: securego/gosec@master
+        with:
+          args: -no-fail -fmt sarif -out results.sarif ./...
+
+      - name: Upload SARIF file
+        uses: github/codeql-action/upload-sarif@v2
+        with:
+          sarif_file: results.sarif
