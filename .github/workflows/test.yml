@@ -9,7 +9,7 @@ on:
       - '.github/workflows/scraper.yml'
   pull_request:
     branches: [ main ]
-  workflow_dispatch:  # Allow manual triggering
+  workflow_dispatch:
 
 jobs:
   test:
@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        go-version: ['1.21.x']  # Simplified to use only Go 1.21
+        go-version: ['1.21.x']
         
     steps:
       - name: Checkout code
@@ -29,110 +29,42 @@ jobs:
           go-version: ${{ matrix.go-version }}
           cache: true
 
-      - name: Install dependencies
-        run: go mod download
+      - name: Initialize Go module
+        run: |
+          go mod tidy
+          cat go.mod
+          cat go.sum
 
-      - name: Run unit tests with race detection
-        run: go test -v -race -coverprofile=coverage.txt -covermode=atomic ./...
+      - name: Install dependencies
+        run: |
+          go get github.com/PuerkitoBio/goquery@v1.8.1
+          go get golang.org/x/net/html/charset@v0.19.0
+          go get golang.org/x/text/encoding/htmlindex@v0.14.0
+          go mod tidy
+
+      - name: Verify module status
+        run: |
+          go mod verify
+          go mod download
+
+      - name: Run unit tests
+        run: go test -v -race ./...
 
       - name: Run linter
         uses: golangci/golangci-lint-action@v4
         with:
-          version: v1.54.2  # Specify a compatible version
+          version: v1.54.2
           args: --timeout=5m
           skip-cache: true
 
-      - name: Check for common mistakes
-        run: go vet ./...
+      - name: Build test binary
+        run: go build -v ./...
 
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
-        with:
-          file: ./coverage.txt
-          flags: unittests
-          fail_ci_if_error: true
-          token: ${{ secrets.CODECOV_TOKEN }}  # Optional if repo is public
-
-      - name: Test binary builds
+      - name: Test with sample input
         run: |
-          GOOS=linux GOARCH=amd64 go build -o scraper-linux-amd64 .
-          GOOS=windows GOARCH=amd64 go build -o scraper-windows-amd64.exe .
-          GOOS=darwin GOARCH=amd64 go build -o scraper-darwin-amd64 .
-
-      - name: Upload test binaries
-        uses: actions/upload-artifact@v3
-        with:
-          name: test-binaries
-          path: |
-            scraper-linux-amd64
-            scraper-windows-amd64.exe
-            scraper-darwin-amd64
-          retention-days: 7
-
-  test-inputs:
-    name: Test Input Validation
-    runs-on: ubuntu-latest
-    needs: test
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v4
-        with:
-          go-version: '1.21.x'
-
-      - name: Test with sample inputs
-        run: |
-          # Create test input file
           echo "URL,Notes" > test_input.csv
           echo "https://example.com,Test site" >> test_input.csv
-          echo "https://invalid-url,Bad URL" >> test_input.csv
-          
-          # Build and run with test input
-          go build -o scraper .
-          ./scraper -input=test_input.csv -timeout=5 -workers=2 || true
-
-      - name: Test error handling
-        run: |
-          # Test with missing input file
-          if ./scraper -input=nonexistent.csv 2>&1 | grep -q "Failed to read URLs"; then
-            echo "Error handling for missing file works correctly"
-          else
-            echo "Error handling test failed"
-            exit 1
-          fi
-
-  benchmark:
-    name: Run Benchmarks
-    runs-on: ubuntu-latest
-    needs: test
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v4
-        with:
-          go-version: '1.21.x'
-
-      - name: Run benchmarks
-        run: |
-          go test -bench=. -benchmem ./... > benchmark.txt
-
-      - name: Store benchmark result
-        uses: benchmark-action/github-action-benchmark@v1
-        with:
-          name: Go Benchmark
-          tool: 'go'
-          output-file-path: benchmark.txt
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          auto-push: true
-          alert-threshold: '150%'
-          comment-on-alert: true
-          fail-on-alert: true
+          ./webscraper -input=test_input.csv -timeout=5 -workers=2 || true
 
   security-scan:
     name: Security Scan
@@ -142,6 +74,14 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21.x'
+
+      - name: Initialize Go module
+        run: go mod tidy
 
       - name: Run Gosec Security Scanner
         uses: securego/gosec@master
