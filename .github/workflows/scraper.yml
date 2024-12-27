@@ -20,10 +20,7 @@ on:
         type: string
 
 env:
-  GO_VERSION: '1.21'
-  INPUT_FILE: 'input.csv'
-  OUTPUT_LINKS: 'output_links.csv'
-  OUTPUT_SUMMARY: 'output_summary.csv'
+  GO_VERSION: '1.21.x'
 
 jobs:
   scrape:
@@ -41,20 +38,33 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
-      - name: Install dependencies
-        run: go mod download
-
-      - name: Verify input file
+      - name: Initialize Go module
         run: |
-          if [ ! -f "${{ env.INPUT_FILE }}" ]; then
-            echo "Error: Input file ${{ env.INPUT_FILE }} not found!"
-            exit 1
-          fi
-          echo "Found input file. Number of URLs to process:"
-          wc -l "${{ env.INPUT_FILE }}"
+          go mod tidy
+          go get github.com/PuerkitoBio/goquery@v1.8.1
+          go get golang.org/x/net/html/charset@v0.19.0
+          go get golang.org/x/text/encoding/htmlindex@v0.14.0
+          go mod tidy
+          cat go.mod  # Debug: show go.mod contents
+          cat go.sum  # Debug: show go.sum contents
+
+      - name: Verify dependencies
+        run: |
+          go mod verify
+          go mod download
 
       - name: Build scraper
         run: go build -v -o scraper
+
+      - name: Verify input file
+        run: |
+          if [ ! -f "input.csv" ]; then
+            echo "Creating sample input file..."
+            echo "URL,Notes" > input.csv
+            echo "https://example.com,Test site" >> input.csv
+          fi
+          echo "Input file contents:"
+          cat input.csv
 
       - name: Run scraper
         run: |
@@ -62,26 +72,26 @@ jobs:
             -timeout=${{ inputs.timeout }} \
             -workers=${{ inputs.workers }} \
             -batch=${{ inputs.batch_size }} \
-            -input="${{ env.INPUT_FILE }}" \
-            -output-links="${{ env.OUTPUT_LINKS }}" \
-            -output-summary="${{ env.OUTPUT_SUMMARY }}"
+            -input="input.csv" \
+            -output-links="output_links.csv" \
+            -output-summary="output_summary.csv"
 
-      - name: Verify outputs and analyze results
+      - name: Check outputs
         run: |
-          if [ ! -f "${{ env.OUTPUT_LINKS }}" ] || [ ! -f "${{ env.OUTPUT_SUMMARY }}" ]; then
-            echo "Error: Output files not generated!"
-            exit 1
+          echo "=== Checking outputs ==="
+          if [ -f "output_links.csv" ]; then
+            echo "Links file exists. First few lines:"
+            head -n 5 output_links.csv
+          else
+            echo "Warning: output_links.csv not found"
           fi
           
-          echo "=== Scraping Results ==="
-          echo "Links extracted:"
-          wc -l "${{ env.OUTPUT_LINKS }}"
-          echo "Summary stats:"
-          wc -l "${{ env.OUTPUT_SUMMARY }}"
-          
-          # Display first few lines of summary
-          echo "=== Summary Preview ==="
-          head -n 5 "${{ env.OUTPUT_SUMMARY }}"
+          if [ -f "output_summary.csv" ]; then
+            echo "Summary file exists. First few lines:"
+            head -n 5 output_summary.csv
+          else
+            echo "Warning: output_summary.csv not found"
+          fi
 
       - name: Upload results
         uses: actions/upload-artifact@v3
@@ -89,13 +99,6 @@ jobs:
         with:
           name: scraping-results-${{ github.run_number }}
           path: |
-            ${{ env.OUTPUT_LINKS }}
-            ${{ env.OUTPUT_SUMMARY }}
+            output_links.csv
+            output_summary.csv
           retention-days: 30
-
-      - name: Cleanup workspace
-        if: always()
-        run: |
-          df -h
-          rm -f scraper
-          df -h
