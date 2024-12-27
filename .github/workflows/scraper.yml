@@ -1,1 +1,101 @@
+name: Web Scraper Workflow
 
+on:
+  workflow_dispatch:      # Only manual triggering
+    inputs:
+      timeout:
+        description: 'Request timeout in seconds'
+        required: false
+        default: '30'
+        type: string
+      workers:
+        description: 'Number of concurrent workers'
+        required: false
+        default: '10'
+        type: string
+      batch_size:
+        description: 'Batch size for processing'
+        required: false
+        default: '1000'
+        type: string
+
+env:
+  GO_VERSION: '1.21'
+  INPUT_FILE: 'input.csv'
+  OUTPUT_LINKS: 'output_links.csv'
+  OUTPUT_SUMMARY: 'output_summary.csv'
+
+jobs:
+  scrape:
+    name: Run Scraper
+    runs-on: ubuntu-latest
+    timeout-minutes: 350  # GitHub Actions maximum timeout limit
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Verify input file
+        run: |
+          if [ ! -f "${{ env.INPUT_FILE }}" ]; then
+            echo "Error: Input file ${{ env.INPUT_FILE }} not found!"
+            exit 1
+          fi
+          echo "Found input file. Number of URLs to process:"
+          wc -l "${{ env.INPUT_FILE }}"
+
+      - name: Build scraper
+        run: go build -v -o scraper
+
+      - name: Run scraper
+        run: |
+          ./scraper \
+            -timeout=${{ inputs.timeout }} \
+            -workers=${{ inputs.workers }} \
+            -batch=${{ inputs.batch_size }} \
+            -input="${{ env.INPUT_FILE }}" \
+            -output-links="${{ env.OUTPUT_LINKS }}" \
+            -output-summary="${{ env.OUTPUT_SUMMARY }}"
+
+      - name: Verify outputs and analyze results
+        run: |
+          if [ ! -f "${{ env.OUTPUT_LINKS }}" ] || [ ! -f "${{ env.OUTPUT_SUMMARY }}" ]; then
+            echo "Error: Output files not generated!"
+            exit 1
+          fi
+          
+          echo "=== Scraping Results ==="
+          echo "Links extracted:"
+          wc -l "${{ env.OUTPUT_LINKS }}"
+          echo "Summary stats:"
+          wc -l "${{ env.OUTPUT_SUMMARY }}"
+          
+          # Display first few lines of summary
+          echo "=== Summary Preview ==="
+          head -n 5 "${{ env.OUTPUT_SUMMARY }}"
+
+      - name: Upload results
+        uses: actions/upload-artifact@v3
+        if: always()  # Upload even if previous steps failed
+        with:
+          name: scraping-results-${{ github.run_number }}
+          path: |
+            ${{ env.OUTPUT_LINKS }}
+            ${{ env.OUTPUT_SUMMARY }}
+          retention-days: 30
+
+      - name: Cleanup workspace
+        if: always()
+        run: |
+          df -h
+          rm -f scraper
+          df -h
