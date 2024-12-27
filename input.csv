@@ -1,1 +1,21 @@
-
+﻿URL,Notes
+https://www.example.com,Regular website
+https://web.whatsapp.com/send?phone=1234567890,Direct WhatsApp link
+https://www.test.com/page-with-whatsapp,Page containing WhatsApp links
+https://example.org/404,Non-existent page to test error handling
+https://rate-limited-api.com,Page that might return 429
+https://dynamic-content.com/ajax-loaded,Page with JavaScript-loaded content
+https://hidden-links.net/css-hidden,Page with CSS-hidden links
+https://relative-paths.com,Page with relative path links
+https://file-downloads.org/documents,Page with PDF and document links
+https://redirect-loop.com,Page that causes redirect loops
+https://malformed-html.net,Page with broken HTML
+https://special-chars.com/üñîçødé,URL with special characters
+https://blocked-bot.com,Page that blocks bot access
+https://slow-response.net,Page with slow response time
+https://auth-required.com/private,Page requiring authentication
+http://invalid-certificate.com,Site with SSL certificate issues
+https://mixed-content.com,Page with mixed content types
+https://empty-hrefs.com,Page with empty href attributes
+https://meta-refresh.com,Page using meta refresh redirects
+https://data-urls.org,Page with links in data attributes
