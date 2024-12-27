@@ -4,20 +4,16 @@ import (
 	"encoding/csv"
 	"flag"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	"github.com/PuerkitoBio/goquery"
 	"golang.org/x/net/html/charset"
-	"golang.org/x/text/encoding/htmlindex"
 )
 
 // Link represents a processed link with metadata
@@ -237,13 +233,15 @@ func (s *Scraper) processLink(href string, sel *goquery.Selection, baseURL *url.
 }
 
 func (s *Scraper) isElementHidden(sel *goquery.Selection) bool {
-	display, _ := sel.Css("display")
-	visibility, _ := sel.Css("visibility")
-	opacity, _ := sel.Css("opacity")
-
-	return display == "none" || 
-		   visibility == "hidden" || 
-		   opacity == "0"
+	style, exists := sel.Attr("style")
+	if !exists {
+		return false
+	}
+	
+	style = strings.ToLower(style)
+	return strings.Contains(style, "display:none") || 
+		   strings.Contains(style, "visibility:hidden") || 
+		   strings.Contains(style, "opacity:0")
 }
 
 func determineLinkType(urlStr string) string {
