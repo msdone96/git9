@@ -148,18 +148,97 @@ func (s *Scraper) attemptScrape(targetURL string) ([]Link, int, error) {
 func (s *Scraper) extractLinksFromTags(doc *goquery.Document, baseURL *url.URL, 
 	seenURLs map[string]bool, links *[]Link) {
 	
-	doc.Find("a, link, area").Each(func(_ int, sel *goquery.Selection) {
-		href, exists := sel.Attr("href")
-		if !exists {
-			return
-		}
+	// Find links in multiple HTML elements and attributes
+	selectors := []string{
+		"a[href]",           // Standard links
+		"div[data-href]",    // Custom data attributes
+		"span[data-link]",   // Custom data attributes
+		"*[data-whatsapp]",  // WhatsApp specific attributes
+		"*[data-wa]",        // WhatsApp specific attributes
+		".whatsapp-link",    // Common CSS classes
+		".wa-link",
+		"[class*='whatsapp']",
+		"[class*='wa-']",
+		"button[onclick*='whatsapp']", // JavaScript onclick handlers
+	}
 
-		link := s.processLink(href, sel, baseURL)
-		if link != nil && !seenURLs[link.URL] {
-			seenURLs[link.URL] = true
-			*links = append(*links, *link)
+	// Join all selectors
+	selectorString := strings.Join(selectors, ", ")
+
+	// Find elements matching any selector
+	doc.Find(selectorString).Each(func(_ int, sel *goquery.Selection) {
+		// Check various attributes for links
+		attributesToCheck := []string{"href", "data-href", "data-link", "data-whatsapp", "data-wa", "onclick"}
+		
+		for _, attr := range attributesToCheck {
+			if value, exists := sel.Attr(attr); exists {
+				// Extract URLs from onclick handlers
+				if attr == "onclick" {
+					urls := extractURLsFromJS(value)
+					for _, url := range urls {
+						if link := s.processLink(url, sel, baseURL); link != nil && !seenURLs[link.URL] {
+							seenURLs[link.URL] = true
+							*links = append(*links, *link)
+						}
+					}
+					continue
+				}
+
+				if link := s.processLink(value, sel, baseURL); link != nil && !seenURLs[link.URL] {
+					seenURLs[link.URL] = true
+					*links = append(*links, *link)
+				}
+			}
+		}
+		
+		// Also check the text content for URLs
+		text := sel.Text()
+		urls := extractURLsFromText(text)
+		for _, url := range urls {
+			if link := s.processLink(url, sel, baseURL); link != nil && !seenURLs[link.URL] {
+				seenURLs[link.URL] = true
+				*links = append(*links, *link)
+			}
 		}
 	})
+}
+
+// extractURLsFromJS extracts URLs from JavaScript strings
+func extractURLsFromJS(js string) []string {
+	var urls []string
+	
+	// Common patterns in JavaScript
+	patterns := []string{
+		`https?://[^\s'"]+whatsapp[^\s'"]*`,
+		`https?://[^\s'"]+wa\.me[^\s'"]*`,
+	}
+	
+	for _, pattern := range patterns {
+		re := regexp.MustCompile(pattern)
+		matches := re.FindAllString(js, -1)
+		urls = append(urls, matches...)
+	}
+	
+	return urls
+}
+
+// extractURLsFromText extracts URLs from plain text
+func extractURLsFromText(text string) []string {
+	var urls []string
+	
+	// URL patterns to match
+	patterns := []string{
+		`https?://(?:chat|api|web)?\.?whatsapp\.com/[^\s'"]+`,
+		`https?://wa\.me/[^\s'"]+`,
+	}
+	
+	for _, pattern := range patterns {
+		re := regexp.MustCompile(pattern)
+		matches := re.FindAllString(text, -1)
+		urls = append(urls, matches...)
+	}
+	
+	return urls
 }
 
 func (s *Scraper) extractLinksFromScripts(doc *goquery.Document, baseURL *url.URL, 
@@ -247,20 +326,22 @@ func (s *Scraper) isElementHidden(sel *goquery.Selection) bool {
 func determineLinkType(urlStr string) string {
 	urlStr = strings.ToLower(urlStr)
 	
-	switch {
-	case strings.Contains(urlStr, "whatsapp.com") || strings.Contains(urlStr, "wa.me"):
-		return "whatsapp"
-	case strings.HasSuffix(urlStr, ".pdf") || 
-		 strings.HasSuffix(urlStr, ".doc") || 
-		 strings.HasSuffix(urlStr, ".docx"):
-		return "document"
-	case strings.HasSuffix(urlStr, ".jpg") || 
-		 strings.HasSuffix(urlStr, ".jpeg") || 
-		 strings.HasSuffix(urlStr, ".png"):
-		return "image"
-	default:
-		return ""
+	// Match various WhatsApp URL patterns
+	whatsappPatterns := []string{
+		"whatsapp.com",
+		"wa.me",
+		"chat.whatsapp.com",
+		"api.whatsapp.com",
+		"web.whatsapp.com",
 	}
+	
+	for _, pattern := range whatsappPatterns {
+		if strings.Contains(urlStr, pattern) {
+			return "whatsapp"
+		}
+	}
+
+	return ""
 }
 
 func (s *Scraper) processBatch(urls []string) []Result {
